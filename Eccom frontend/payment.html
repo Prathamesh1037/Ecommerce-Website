@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Payment Page</title>
+
+  <!-- Razorpay Script -->
+  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f9fafb;
+      padding: 20px;
+    }
+
+    .container {
+      max-width: 450px;
+      margin: auto;
+      background: white;
+      padding: 25px;
+      border-radius: 12px;
+      box-shadow: 0 3px 12px rgba(0, 0, 0, 0.08);
+    }
+
+    .form-group {
+      margin-bottom: 15px;
+    }
+
+    label {
+      font-weight: 600;
+      margin-bottom: 6px;
+      display: block;
+    }
+
+    input {
+      width: 100%;
+      padding: 10px;
+      border-radius: 6px;
+      border: 1px solid #ddd;
+      font-size: 16px;
+    }
+
+    .form-group.error input {
+      border-color: #ef4444;
+      background-color: #fef2f2;
+    }
+
+    .pay-button {
+      margin-top: 10px;
+      width: 100%;
+      padding: 14px;
+      background: #4f46e5;
+      color: white;
+      font-size: 18px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: 0.3s ease;
+    }
+
+    .pay-button:hover {
+      background: #4338ca;
+    }
+
+    .shake {
+      animation: shake 0.5s cubic-bezier(.36,.07,.19,.97) both;
+    }
+
+    @keyframes shake {
+      10%, 90% { transform: translate3d(-1px, 0, 0); }
+      20%, 80% { transform: translate3d(2px, 0, 0); }
+      30%, 50%, 70% { transform: translate3d(-4px, 0, 0); }
+      40%, 60% { transform: translate3d(4px, 0, 0); }
+    }
+  </style>
+</head>
+
+<body>
+
+  <div class="container">
+    <h2>Payment</h2>
+
+    <div class="form-group">
+      <label>Name</label>
+      <input type="text" id="name" placeholder="Enter your name">
+    </div>
+
+    <div class="form-group">
+      <label>Email</label>
+      <input type="email" id="email" placeholder="Enter your email">
+    </div>
+
+    <div class="form-group">
+      <label>Phone</label>
+      <input type="tel" id="phone" placeholder="Enter your phone number">
+    </div>
+
+    <button class="pay-button">Pay</button>
+  </div>
+
+  <script>
+    // 🟢 Load totalAmount from sessionStorage (saved by cart.js)
+    const checkoutData = JSON.parse(sessionStorage.getItem("checkoutData")) || {};
+    const totalAmount = checkoutData.totalAmount || 0;
+
+    if (totalAmount === 0) {
+      alert("Cart data missing. Redirecting...");
+      window.location.href = "cart.html";
+    }
+
+    const payButton = document.querySelector(".pay-button");
+
+    function isValidEmail(email) {
+      return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+    }
+
+    function isValidPhone(phone) {
+      return /^\d{10}$/.test(phone);
+    }
+
+    function shakeButton() {
+      payButton.classList.add("shake");
+      setTimeout(() => payButton.classList.remove("shake"), 500);
+    }
+
+    payButton.addEventListener("click", function () {
+      const name = document.getElementById("name").value.trim();
+      const email = document.getElementById("email").value.trim();
+      const phone = document.getElementById("phone").value.trim();
+
+      // Reset validation UI
+      document.querySelectorAll(".form-group").forEach((group) => {
+        group.classList.remove("error");
+      });
+
+      let hasError = false;
+      if (!name) {
+        document.getElementById("name").parentElement.classList.add("error");
+        hasError = true;
+      }
+      if (!email || !isValidEmail(email)) {
+        document.getElementById("email").parentElement.classList.add("error");
+        hasError = true;
+      }
+      if (!phone || !isValidPhone(phone)) {
+        document.getElementById("phone").parentElement.classList.add("error");
+        hasError = true;
+      }
+
+      if (hasError) {
+        shakeButton();
+        alert("Please fill all required fields correctly.");
+        return;
+      }
+
+      payButton.innerHTML = "Processing...";
+      payButton.disabled = true;
+
+      // Create Razorpay order (backend)
+      fetch("http://localhost:8080/api/payment/create-order", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, email, phone, amount: totalAmount }),
+      })
+        .then((res) => res.json())
+        .then((data) => {
+          const razorpayOrderId = data.id;
+
+          const options = {
+            key: "rzp_test_RekcF1I5UUtAeF",
+            amount: totalAmount * 100,   // ✔ cart total
+            currency: "INR",
+            order_id: razorpayOrderId,
+
+            prefill: { name, email, contact: phone },
+
+            handler: function (response) {
+              fetch("http://localhost:8080/api/payment/update-order", {
+                method: "POST",
+                headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                body: new URLSearchParams({
+                  paymentId: response.razorpay_payment_id,
+                  orderId: response.razorpay_order_id,
+                  status: "SUCCESS",
+                }),
+              })
+                .then(() => {
+                  payButton.innerHTML = "Payment Successful!";
+                  payButton.style.background = "green";
+                  alert(`🎉 Your payment of ₹${totalAmount} was successful!`);
+                })
+                .catch(() => {
+                  alert("Payment succeeded but backend update failed.");
+                });
+            },
+          };
+
+          const rzp = new Razorpay(options);
+          rzp.open();
+        })
+        .catch((err) => {
+          console.error("Error:", err);
+          alert("Something went wrong. Please try again.");
+          payButton.disabled = false;
+          payButton.innerHTML = "Pay ₹" + totalAmount;
+        });
+    });
+  </script>
+
+</body>
+</html>
